@@ -5,13 +5,15 @@ parallel episodes. Standard library only. Not installed by npm install.
 
     from hospital_env import HospitalEnv
     env = HospitalEnv("http://127.0.0.1:3000", "hd_env_...")
-    first = env.reset(task_id="<task id>", seed=1, condition="autonomous")
+    first = env.reset(task="<task id>", run="my-run", seed=1, condition="autonomous")
     out = env.step(first["episodeId"], {"tool": "read-chart", "args": {"type": "Patient", "id": "..."}})
     env.close(first["episodeId"])
 """
 import json
+import threading
 import urllib.request
 import urllib.error
+import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 
 
@@ -23,10 +25,13 @@ class EnvError(Exception):
 
 
 class HospitalEnv:
-    def __init__(self, base_url, token, timeout=60):
+    def __init__(self, base_url, token, timeout=60, run=None):
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.timeout = timeout
+        self.run = run
+        self._named = {}
+        self._lock = threading.Lock()
 
     def _call(self, method, path, body=None):
         data = None if body is None else json.dumps(body).encode("utf-8")
@@ -52,10 +57,13 @@ class HospitalEnv:
         q = "&".join(f"{k}={v}" for k, v in (("taskSet", task_set), ("part", part)) if v)
         return self._call("GET", "/env/v1/tasks" + ("?" + q if q else ""))
 
-    def reset(self, task_id=None, task_set=None, index=None, seed=0, condition="autonomous", clock=None, budgets=None, simulated_user=None):
-        body = {"seed": seed, "condition": condition}
-        if task_id:
-            body["taskId"] = task_id
+    def reset(self, task=None, task_id=None, run=None, task_set=None, index=None, seed=0, condition="autonomous", clock=None, budgets=None, simulated_user=None):
+        chosen_task = task if task is not None else task_id
+        chosen_run = run if run is not None else (self.run or "default-run")
+        chosen_seed = seed if isinstance(seed, int) else 0
+        body = {"run": chosen_run, "seed": chosen_seed, "condition": condition}
+        if chosen_task:
+            body["task"] = chosen_task
         if task_set:
             body["taskSet"] = task_set
             body["index"] = index or 0
@@ -65,19 +73,43 @@ class HospitalEnv:
             body["budgets"] = budgets
         if simulated_user:
             body["simulatedUser"] = simulated_user
-        return self._call("POST", "/env/v1/reset", body)
+        out = self._call("POST", "/env/v1/reset", body)
+        with self._lock:
+            self._named[out["episodeId"]] = {
+                "task": body.get("task"),
+                "run": chosen_run,
+                "seed": chosen_seed,
+                "attempt": out["episodeId"],
+            }
+        return out
+
+    def _four(self, episode_id):
+        with self._lock:
+            meta = self._named.get(episode_id)
+        if not meta:
+            raise ValueError("Unknown attempt: call reset first")
+        return dict(meta)
 
     def step(self, episode_id, action):
-        return self._call("POST", "/env/v1/step", {"episodeId": episode_id, "action": action})
+        payload = self._four(episode_id)
+        payload["action"] = action
+        return self._call("POST", "/env/v1/step", payload)
 
     def state(self, episode_id):
-        return self._call("GET", "/env/v1/state?episodeId=" + episode_id)
+        n = self._four(episode_id)
+        q = urllib.parse.urlencode({"task": n["task"], "run": n["run"], "seed": n["seed"]})
+        return self._call("GET", f"/env/v1/state/{urllib.parse.quote(episode_id, safe='')}?{q}")
 
     def close(self, episode_id):
-        return self._call("POST", "/env/v1/close", {"episodeId": episode_id})
+        return self._call("POST", "/env/v1/close", self._four(episode_id))
+
+    def finish_run(self, run=None):
+        return self._call("POST", "/env/v1/runs/finish", {"run": run if run is not None else self.run})
 
     def mcp(self, episode_id, method, params=None, msg_id=1):
-        return self._call("POST", "/env/v1/mcp/" + episode_id, {"jsonrpc": "2.0", "id": msg_id, "method": method, "params": params or {}})
+        n = self._four(episode_id)
+        q = urllib.parse.urlencode({"task": n["task"], "run": n["run"], "seed": n["seed"]})
+        return self._call("POST", f"/env/v1/mcp/{urllib.parse.quote(episode_id, safe='')}?{q}", {"jsonrpc": "2.0", "id": msg_id, "method": method, "params": params or {}})
 
     def run_episode(self, reset_kwargs, policy, max_steps=50):
         """Runs one episode: policy(observation, tools, info) -> action dict."""

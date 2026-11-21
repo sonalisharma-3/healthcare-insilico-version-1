@@ -156,7 +156,7 @@ export function createEpisodes({ store, getHitl = () => null }) {
     const flipped = again.filter((e) => { const [a, b] = e.evaluations.slice(-2); return a.signature !== b.signature; });
     return {
       episodes: episodes.length, histogram: histogram(episodes.map((e) => e.outcome.totalReward)),
-      byKind: Object.fromEntries(['rollout', 'shadow', 'hitl', 'shadow-case', 'ablation', 'regression'].map((k) => [k, episodes.filter((e) => e.kind === k).length])),
+      byKind: Object.fromEntries(['rollout', 'environment', 'shadow', 'hitl', 'shadow-case', 'ablation', 'regression'].map((k) => [k, episodes.filter((e) => e.kind === k).length])),
       flipRate: again.length ? Math.round((flipped.length / again.length) * 1000) / 1000 : null, reEvaluated: again.length, flipped: flipped.length,
     };
   }
@@ -217,7 +217,7 @@ export function createEpisodes({ store, getHitl = () => null }) {
     if (kind === 'episodes') {
       for (const e of allowed) lines.push(e);
     } else {
-      const rollouts = allowed.filter((e) => e.kind === 'rollout' && e.caseId);
+      const rollouts = allowed.filter((e) => ['rollout', 'environment'].includes(e.kind) && e.caseId);
       const byCase = new Map();
       for (const e of rollouts) { if (!byCase.has(e.caseId)) byCase.set(e.caseId, []); byCase.get(e.caseId).push(e); }
       for (const group of byCase.values()) group.sort((a, b) => b.outcome.totalReward - a.outcome.totalReward || String(a.timestamp).localeCompare(String(b.timestamp)) || a.id.localeCompare(b.id));

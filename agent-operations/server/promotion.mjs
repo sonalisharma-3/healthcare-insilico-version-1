@@ -41,24 +41,26 @@ export async function evaluateGate(store, agent) {
   const compared = shadow?.compared ?? 0;
   const agreementRate = shadow?.agreementRate ?? null;
   // Only a whole suite counts: one easy scenario passing must not unlock promotion. A later partial run that fails still blocks.
-  const redRuns = (await store.query('Run', { where: (r) => r.mode === 'redteam' && r.agentId === agent.id && r.version === agent.version && r.endedAt && r.result?.kind === 'suite' }))
+  const redRuns = (await store.query('Run', { where: (r) => r.mode === 'redteam' && r.agentId === agent.id && r.version === agent.version && r.endedAt && ['suite', 'test-suite'].includes(r.result?.kind) }))
     .sort((a, b) => String(b.endedAt).localeCompare(String(a.endedAt)) || b._seq - a._seq);
-  const latest = redRuns.find((r) => r.result.complete) ?? null;
-  const laterFailure = latest ? redRuns.slice(0, redRuns.indexOf(latest)).find((r) => !r.result.passed) ?? null : null;
+  const isCompleteSuite = (r) => Boolean(r.result?.complete || (r.result?.kind === 'test-suite' && r.result?.suite?.id === 'safety-suite'));
+  const isPassedSuite = (r) => (r.result?.kind === 'test-suite' ? r.result.failed === 0 : Boolean(r.result?.passed));
+  const latest = redRuns.find(isCompleteSuite) ?? null;
+  const laterFailure = latest ? redRuns.slice(0, redRuns.indexOf(latest)).find((r) => !isPassedSuite(r)) ?? null : null;
   const redComplete = Boolean(latest);
-  const redPassed = Boolean(latest?.result.passed) && !laterFailure;
+  const redPassed = Boolean(latest && isPassedSuite(latest)) && !laterFailure;
   const blockers = [];
   if (compared < gate.minCases) blockers.push(`Shadow: ${compared} case${compared === 1 ? '' : 's'} compared with a clinician; at least ${gate.minCases} are required`);
   if (agreementRate == null || agreementRate < gate.minAgreement) blockers.push(`Shadow: agreement is ${agreementRate == null ? 'not measured yet' : `${Math.round(agreementRate * 1000) / 10}%`}; at least ${Math.round(gate.minAgreement * 1000) / 10}% is required`);
   if (!redRuns.length) blockers.push('Red team: no red-team run exists for this version');
   else if (!latest) blockers.push('Red team: no red-team run for this version included every applicable scenario');
-  else if (!latest.result.passed) blockers.push('Red team: the most recent full red-team run for this version did not pass');
+  else if (!isPassedSuite(latest)) blockers.push('Red team: the most recent full red-team run for this version did not pass');
   else if (laterFailure) blockers.push('Red team: a scenario failed in a run made after the last full pass');
   if (agent.surveillance?.promotionBlocked) blockers.push(`Surveillance: promotion is blocked (${agent.surveillance.promotionBlocked.reason})`);
   return {
     agentId: agent.id, version: agent.version, gate,
     shadow: { compared, agreementRate, ok: compared >= gate.minCases && agreementRate != null && agreementRate >= gate.minAgreement },
-    redTeam: { runId: latest?.id ?? null, endedAt: latest?.endedAt ?? null, runs: redRuns.length, passed: latest ? redPassed : null, complete: redComplete, scenarios: latest?.result?.total ?? null, failed: latest?.result?.failed ?? null, ok: redPassed },
+    redTeam: { runId: latest?.id ?? null, endedAt: latest?.endedAt ?? null, runs: redRuns.length, passed: latest ? redPassed : null, complete: redComplete, scenarios: latest?.result?.total ?? latest?.result?.tests ?? null, failed: latest?.result?.failed ?? null, ok: redPassed },
     eligible: blockers.length === 0, blockers, promoted: isPromoted(agent),
   };
 }
