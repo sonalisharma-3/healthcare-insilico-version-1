@@ -60,7 +60,7 @@ export function createInterop({ store, fhir }) {
     // IPS
     if (type === 'Patient' && parts[1] && op === '$summary' && m === 'GET') return { status: 200, body: await summary(parts[1], ctx) };
     // MPI: PIXm (ITI-83). PDQm (ITI-78) is the Patient search with identifier, birthdate and gender: there are no names to search.
-    if (type === 'Patient' && op === '$ihe-pix' && (m === 'GET' || m === 'POST')) return { status: 200, body: await pix(url, m === 'POST' ? await readJson(req) : null) };
+    if (type === 'Patient' && op === '$ihe-pix' && (m === 'GET' || m === 'POST')) return { status: 200, body: await pix(url, m === 'POST' ? await readJson(req) : null, ctx) };
     return null;
   }
   async function summary(id, ctx) {
@@ -77,11 +77,11 @@ export function createInterop({ store, fhir }) {
     const composition = { resourceType: 'Composition', id: `ips-${id}`, meta: { profile: ['http://hl7.org/fhir/uv/ips/StructureDefinition/Composition-uv-ips'] }, status: 'final', type: { coding: [{ system: LOINC, code: '60591-5', display: 'Patient summary Document' }] }, subject: { reference: `Patient/${id}` }, date: now, author: [{ display: 'Healthcare InSilico' }], title: `Patient summary: Patient ${mrnOf(patient) || id}`, confidentiality: 'N', section: sections };
     return { resourceType: 'Bundle', id: `ips-${id}-${Date.parse(now)}`, meta: { profile: ['http://hl7.org/fhir/uv/ips/StructureDefinition/Bundle-uv-ips'] }, identifier: { system: 'urn:ietf:rfc:3986', value: `urn:uuid:${crypto.randomUUID()}` }, type: 'document', timestamp: now, entry: [composition, ...entries].map((r) => ({ fullUrl: `${base}/fhir/R4/${r.resourceType}/${r.id}`, resource: narrate(r) })) };
   }
-  async function pix(url, body) {
+  async function pix(url, body, ctx = {}) {
     const q = Object.fromEntries(url.searchParams); for (const x of body?.parameter || []) q[x.name] = x.valueToken ?? x.valueString ?? x.valueUri ?? q[x.name];
     const [system, value] = String(q.sourceIdentifier || '').includes('|') ? String(q.sourceIdentifier).split('|') : [null, q.sourceIdentifier];
     if (!value) throw new HttpError(400, 'sourceIdentifier is required (system|value)', 'invalid');
-    const hit = (await store.query('Patient', {}, { branch: 'main' })).filter((pt) => (pt.identifier || []).some((i) => i.value === value && (!system || i.system === system)));
+    const hit = (await store.query('Patient', {}, { branch: ctx.branch ?? 'main', asOf: ctx.asOf })).filter((pt) => (pt.identifier || []).some((i) => i.value === value && (!system || i.system === system)));
     if (!hit.length) throw new HttpError(404, 'sourceIdentifier not found', 'not-found'); if (hit.length > 1) throw new HttpError(409, 'More than one patient has this identifier', 'conflict');
     const targets = (hit[0].identifier || []).filter((i) => !(i.value === value && i.system === system)).filter((i) => !q.targetSystem || String(q.targetSystem).split(',').includes(i.system));
     return { resourceType: 'Parameters', parameter: [...targets.map((i) => ({ name: 'targetIdentifier', valueIdentifier: { system: i.system, value: i.value } })), { name: 'targetId', valueReference: { reference: `Patient/${hit[0].id}` } }] };

@@ -214,7 +214,7 @@ export function createLabApi({ store, fhir }) {
       if (mine.length && ctx.actor.role !== 'administrator') throw new HttpError(409, 'Verification is a second step: the technologist who entered a result cannot verify it');
       for (const code of new Set(pending.map(loinc))) { const qc = await qcStatus(code, ctx, tx); if (qc.outOfRange) throw new HttpError(409, `Quality control for ${LAB_BY_CODE.get(code)?.name || code} is out of range (last z ${qc.lastZ}); results cannot be released until QC passes`); }
       const verified = [];
-      for (const r of pending) { const { _seq, ...d } = r; verified.push((await fhir.writeInTx(tx, 'Observation', r.id, { ...d, status: 'final', performer: [...(d.performer || []), { display: ctx.actor.id }] }, ctx, { action: 'lab.verify' })).saved); }
+      for (const r of pending) { const { _seq, ...d } = r; verified.push((await fhir.writeInTx(tx, 'Observation', r.id, { ...d, status: 'final', issued: tx.now(), performer: [...(d.performer || []), { display: ctx.actor.id }] }, ctx, { action: 'lab.verify' })).saved); }
       const { _seq, ...sd } = s;
       await fhir.writeInTx(tx, 'Specimen', s.id, withExt(MACHINES.Specimen.set(sd, 'verified'), 'urn:hospital-desktop:verified-at', 'valueString', tx.now()), ctx, { action: 'specimen.verified' });
       if (body.comment) await log(tx, ctx, { kind: 'execute', action: 'lab.comment', args: { specimen: s.id }, why: String(body.comment).slice(0, 500), entityRef: `Specimen/${s.id}`, patientRef: s.subject.reference, description: 'verification comment', audit: false });

@@ -304,7 +304,8 @@ export function createApp({ store, webRoot = REPO_ROOT, corsOrigins = [], hooks 
         return send(res, 200, { roles: ROLES.map((r) => permissionFor(r.id)), built, apps: APPS }, cors);
       }
       if (p === '/auth/patients') {
-        const patients = (await store.head('Patient')).map((pt) => {
+        const pctx = await requestContext(store, req, url);
+        const patients = (await store.query('Patient', {}, { branch: pctx.branch, asOf: pctx.asOf })).map((pt) => {
           const name = pt.name?.[0] || {};
           return {
             id: pt.id,

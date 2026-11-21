@@ -51,13 +51,17 @@ function derivePatient(doc) {
 }
 
 function deriveValidAt(doc) {
-  const candidate = doc.effectiveDateTime ?? doc.effectivePeriod?.start ?? doc.issued ?? doc.authoredOn
-    ?? doc.onsetDateTime ?? doc.recordedDate ?? doc.date ?? doc.period?.start ?? doc.started ?? doc.start
-    ?? doc.sent ?? doc.recorded;
+  // Prefer result availability time (issued) over specimen draw time (effectiveDateTime) so lab results appear when resulted.
+  const candidate = doc.issued ?? doc.effectiveDateTime ?? doc.effectivePeriod?.start ?? doc.authoredOn
+    ?? doc.performedDateTime ?? doc.performedPeriod?.start ?? doc.occurrenceDateTime
+    ?? doc.whenHandedOver ?? doc.whenPrepared ?? doc.receivedTime ?? doc.collection?.collectedDateTime
+    ?? doc.identifiedDateTime ?? doc.onsetDateTime ?? doc.recordedDate ?? doc.date ?? doc.period?.start
+    ?? doc.started ?? doc.start ?? doc.sent ?? doc.created ?? doc.recorded;
   if (typeof candidate !== 'string') return null;
   const date = new Date(candidate);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
+const TIMELESS_TYPES_SQL = "('Patient','Practitioner','Organization','Location','Device','RelatedPerson','Coverage','Consent')";
 
 /**
  * No patient names anywhere (docs/PAYER.md, rules): a patient is known by number. Whatever name a record holds,
@@ -125,15 +129,25 @@ function bindStore(db, root, inTransaction) {
   async function latest(q, { type, id, patient, groupKey, internal, branch = 'main', asOf, contains }) {
     const chain = await lineage(q, branch);
     const bound = asOf == null ? null : iso(asOf);
+    const careIdx = chain.findIndex((b) => b.careCap);
+    const care = careIdx >= 0 ? chain[careIdx] : null;
     const depthParams = [];
     const whereParams = [];
     const depthSql = chain.map((b, i) => { depthParams.push(b.id); return `WHEN ? THEN ${i}`; }).join(' ');
-    const visible = chain.map((b) => {
+    const visible = chain.map((b, idx) => {
       const limit = minIso(b.cap, bound);
+      const parts = ['rv.branch = ?'];
       whereParams.push(b.id);
-      if (limit == null) return '(rv.branch = ?)';
-      whereParams.push(limit);
-      return '(rv.branch = ? AND rv.recorded_at <= ?)';
+      if (limit != null) {
+        parts.push('rv.recorded_at <= ?');
+        whereParams.push(limit);
+      }
+      // Apply careCap before ROW_NUMBER() to ancestors of the care-capped branch so older versions still surface and child branches see their own writes.
+      if (care && idx > careIdx) {
+        parts.push(`(rv.valid_at <= ? OR rv.resource_type IN ${TIMELESS_TYPES_SQL})`);
+        whereParams.push(care.careCap);
+      }
+      return `(${parts.join(' AND ')})`;
     }).join(' OR ');
     const inner = [`(${visible})`];
     if (type) { inner.push('rv.resource_type = ?'); whereParams.push(type); }
@@ -154,10 +168,6 @@ function bindStore(db, root, inTransaction) {
     if (groupKey && type) { inner.push('rv.id IN (SELECT g.id FROM resource_versions g WHERE g.resource_type = ? AND g.group_key = ?)'); whereParams.push(type, groupKey); }
     const outer = ['t.rn = 1'];
     const outerParams = [];
-    // A time-machine copy (care_cap): what its parents hold is shown only up to that moment in the patient's care.
-    // Its own writes, and records with no clinical time of their own (clinical time = recording time), always show.
-    const care = chain.find((b) => b.careCap);
-    if (care) { outer.push('(t.branch = ? OR t.valid_at <= ? OR t.valid_at = t.recorded_at)'); outerParams.push(care.id, care.careCap); }
     if (patient) { outer.push('t.patient = ?'); outerParams.push(patient); }
     if (groupKey) { outer.push('t.group_key = ?'); outerParams.push(groupKey); }
     const sql = `SELECT t.seq, t.body FROM (
@@ -304,12 +314,23 @@ function bindStore(db, root, inTransaction) {
     /** All versions visible to a branch, oldest first. */
     async history(type, id, opts = {}) {
       const chain = await lineage(db, opts.branch ?? 'main');
+      const bound = opts.asOf == null ? null : iso(opts.asOf);
+      const careIdx = chain.findIndex((b) => b.careCap);
+      const care = careIdx >= 0 ? chain[careIdx] : null;
       const params = [type, id];
-      const visible = chain.map((b) => {
+      const visible = chain.map((b, idx) => {
+        const limit = minIso(b.cap, bound);
+        const parts = ['branch = ?'];
         params.push(b.id);
-        if (b.cap == null) return '(branch = ?)';
-        params.push(b.cap);
-        return '(branch = ? AND recorded_at <= ?)';
+        if (limit != null) {
+          parts.push('recorded_at <= ?');
+          params.push(limit);
+        }
+        if (care && idx > careIdx) {
+          parts.push(`(valid_at <= ? OR resource_type IN ${TIMELESS_TYPES_SQL})`);
+          params.push(care.careCap);
+        }
+        return `(${parts.join(' AND ')})`;
       }).join(' OR ');
       const rows = await db.all(
         `SELECT seq, body FROM resource_versions WHERE resource_type = ? AND id = ? AND (${visible})

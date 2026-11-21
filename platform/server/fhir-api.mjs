@@ -498,7 +498,7 @@ export function createFhirApi({ store, hooks = {} }) {
 
   async function history(type, id, ctx) {
     assertType(type);
-    const versions = await reader(ctx).history(type, id, { branch: ctx.branch });
+    const versions = await reader(ctx).history(type, id, { branch: ctx.branch, asOf: ctx.asOf });
     if (!versions.length) throw new HttpError(404, `${type}/${id} not found`, 'not-found');
     await logRead(ctx, { action: 'fhir.history', args: { type, id }, resources: versions });
     return { status: 200, body: bundle('history', versions.reverse()) };

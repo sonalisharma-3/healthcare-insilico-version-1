@@ -86,13 +86,25 @@ function parseFile(file) {
   return out;
 }
 
-function clinicalTime(doc, nowIso) {
-  const raw = doc.effectiveDateTime ?? doc.effectivePeriod?.start ?? doc.issued ?? doc.authoredOn ?? doc.onsetDateTime
-    ?? doc.recordedDate ?? doc.date ?? doc.period?.start ?? doc.started ?? doc.start ?? doc.sent ?? doc.meta?.lastUpdated;
+function clinicalValidAt(doc) {
+  // Prefer issued (result availability) over effectiveDateTime (specimen draw); preserve future shifted dates (e.g. MIMIC-IV 2100-2210).
+  const raw = doc.issued ?? doc.effectiveDateTime ?? doc.effectivePeriod?.start ?? doc.authoredOn
+    ?? doc.performedDateTime ?? doc.performedPeriod?.start ?? doc.occurrenceDateTime
+    ?? doc.whenHandedOver ?? doc.whenPrepared ?? doc.receivedTime ?? doc.collection?.collectedDateTime
+    ?? doc.identifiedDateTime ?? doc.onsetDateTime ?? doc.recordedDate ?? doc.date ?? doc.period?.start
+    ?? doc.started ?? doc.start ?? doc.sent ?? doc.created ?? doc.meta?.lastUpdated;
   const t = typeof raw === 'string' ? new Date(raw) : null;
-  if (!t || Number.isNaN(t.getTime())) return nowIso;
-  const value = t.toISOString();
-  return value > nowIso ? nowIso : value;
+  return t && !Number.isNaN(t.getTime()) ? t.toISOString() : null;
+}
+
+function importRecordedAt(doc, valid, nowIso) {
+  if (valid) return valid > nowIso ? nowIso : valid;
+  // Anchor historical Patients to birthDate (when in the past) so Patient/$everything?_asOf=<past> finds the Patient resource.
+  if (doc.resourceType === 'Patient' && typeof doc.birthDate === 'string') {
+    const b = new Date(doc.birthDate);
+    if (!Number.isNaN(b.getTime()) && b.toISOString() <= nowIso) return b.toISOString();
+  }
+  return nowIso;
 }
 
 const identifierKeys = (doc) => (doc.identifier || []).flatMap((i) => (i?.value ? [`${i.system ?? ''}|${i.value}`, `|${i.value}`] : []));
@@ -194,9 +206,10 @@ export async function importFhirPaths(store, targets, {
             else if (assignMrn && !houseMrnOf(doc)) { doc = await assignHouseMrn(tx, doc, 'main'); report.mrnsAssigned += 1; }
           }
           const wall = tx.now();
-          const when = clinicalTime(doc, wall);
+          const valid = clinicalValidAt(doc);
+          const recorded = existing ? wall : importRecordedAt(doc, valid, wall);
           await tx.save(type, { ...doc, _import: { checksum: sum, source: path.basename(file), importedAt: wall } }, {
-            recordedAt: existing ? wall : when, validAt: when, updatedBy: 'import',
+            recordedAt: recorded, validAt: valid ?? recorded, updatedBy: 'import',
           });
           count(type, 'written');
           fileCounts.written += 1;

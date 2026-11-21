@@ -84,6 +84,9 @@ export async function assertAgentRequest(store, ctx, { method, area, path }) {
   if (ctx.run.agentId !== agent.id) {
     throw new EnvelopeError(403, 'run-mismatch', `Run ${ctx.run.id} does not belong to agent "${agent.id}"`);
   }
+  if (ctx.run.branch && ctx.branch !== ctx.run.branch) {
+    throw new EnvelopeError(403, 'branch', `Agents may only access their Run's branch (run branch: ${ctx.run.branch})`);
+  }
   const sw = await engagedSwitch(store, { agentId: agent.id, mode: ctx.run.mode });
   if (sw) throw new EnvelopeError(403, 'kill-switch', `Stopped by ${describeSwitch(sw)}`);
   if (ctx.run.paused && !ctx.run.endedAt) throw new EnvelopeError(409, 'run-paused', `Run ${ctx.run.id} is paused`);
