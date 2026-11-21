@@ -79,7 +79,7 @@ async function createRunInner(store, input, actor) {
     hitl = { targetBranch: target, askFrequency, confidenceThreshold: threshold, probe: Boolean(input.probe), awaitingDecision: false };
   }
   // Plan-master 8.4 to 8.6: what the agent may do, stored on the Run. Runs that name no condition get the deployed baseline.
-  const condition = input.condition != null || input.capabilities != null ? await resolveCondition(store, input) : { condition: null, capabilities: null, clock: 'real', askTimeoutMs: null };
+  const condition = input.condition != null || input.capabilities != null ? await resolveCondition(store, input) : { condition: null, capabilities: null, clock: 'real', askTimeoutMs: input.askTimeoutMs != null && Number.isFinite(Number(input.askTimeoutMs)) ? Number(input.askTimeoutMs) : null };
   let timeline = normalizeTimeline(input.timeline);
   if (!timeline && input.caseId) { const c = await store.get('EvalCase', String(input.caseId)).catch(() => null); if (Array.isArray(c?.timeline) && c.timeline.length) timeline = c.timeline; }
   const [subjType, subjId] = String(input.subject || '').split('/');

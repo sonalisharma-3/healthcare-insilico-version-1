@@ -11,6 +11,7 @@ import { createBulk } from './bulk.mjs';
 import { createSubscriptions } from './subscriptions.mjs';
 import { toR4 } from './r5.mjs';
 import { mrnOf } from '../../ehr/server/clinical-rules.mjs';
+import { withoutJudgements } from '../../platform/server/fhir-api.mjs';
 
 const LOINC = 'http://loinc.org';
 // IPS sections (International Patient Summary IG 1.1): LOINC code, title, the resources that fill it.
@@ -65,8 +66,9 @@ export function createInterop({ store, fhir }) {
   }
   async function summary(id, ctx) {
     if (await createConsent(store).blocked(id, ctx)) throw new HttpError(403, 'The patient\'s consent does not allow this summary to be shared for this purpose', 'forbidden');
-    const patient = await store.get('Patient', id, { branch: ctx.branch, asOf: ctx.asOf }); if (!patient) throw new HttpError(404, `Patient/${id} not found`, 'not-found');
-    const rows = await store.everything(`Patient/${id}`, { branch: ctx.branch, asOf: ctx.asOf }); const now = new Date().toISOString(); const entries = [clean(patient)]; const sections = [];
+    const src = ctx.actor?.kind === 'agent' ? withoutJudgements(ctx.lens ?? store) : (ctx.lens ?? store);
+    const patient = await src.get('Patient', id, { branch: ctx.branch, asOf: ctx.asOf }); if (!patient) throw new HttpError(404, `Patient/${id} not found`, 'not-found');
+    const rows = await src.everything(`Patient/${id}`, { branch: ctx.branch, asOf: ctx.asOf }); const now = new Date().toISOString(); const entries = [clean(patient)]; const sections = [];
     for (const [code, title, types, required, pick] of IPS_SECTIONS) {
       const found = rows.filter((r) => types.includes(r.resourceType) && (!pick || pick(r)) && !['entered-in-error', 'cancelled'].includes(r.status)).slice(0, 200);
       const items = found.length || !NONE[code] ? found : [NONE[code](id, { reference: `Patient/${id}` })];

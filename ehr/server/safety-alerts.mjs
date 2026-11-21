@@ -44,14 +44,42 @@ export async function duplicateOrder(tx, doc, branch) {
   };
 }
 
+const SNOMED_ALLERGEN_CLASSES = {
+  '764146007': ['penicillins'], '91936005': ['penicillins'], '294499007': ['penicillins'], '294505008': ['penicillins'],
+  '91930004': ['cephalosporins'], '91939003': ['sulfonamides'], '293586001': ['nsaids'], '293585002': ['nsaids', 'salicylates'],
+  '293597001': ['opioids'], '294923007': ['ace-inhibitors'],
+};
+const CLASS_KEYWORDS = [
+  ['penicillins', /\b(penicillin|amoxicillin|ampicillin|piperacillin|beta[- ]?lactam)/i],
+  ['cephalosporins', /\b(cephalosporin|cephalexin|ceftriaxone|cefazolin|cefepime)/i],
+  ['sulfonamides', /\b(sulfa|sulfonamide|sulfamethoxazole|trimethoprim)/i],
+  ['nsaids', /\b(nsaid|ibuprofen|naproxen|ketorolac|aspirin|salicylate)/i],
+  ['opioids', /\b(opioid|morphine|oxycodone|codeine|hydromorphone|fentanyl)/i],
+];
+
 function allergenClasses(allergy) {
   const classes = new Set();
   const ingredients = new Set();
+  const texts = [allergy.code?.text].filter(Boolean);
   for (const c of allergy.code?.coding || []) {
+    if (c.display) texts.push(c.display);
     if (c.system === SYSTEMS.drugClass) classes.add(c.code);
     if (c.system === SYSTEMS.rxnorm) {
       ingredients.add(c.code);
       for (const cls of MED_BY_CODE.get(c.code)?.classes || []) if (CROSS_REACTIVE_CLASSES.includes(cls)) classes.add(cls);
+    }
+    if (c.system === SYSTEMS.snomed && SNOMED_ALLERGEN_CLASSES[c.code]) {
+      for (const cls of SNOMED_ALLERGEN_CLASSES[c.code]) classes.add(cls);
+    }
+  }
+  const joined = texts.join(' ');
+  if (joined) {
+    for (const [cls, rx] of CLASS_KEYWORDS) if (rx.test(joined)) classes.add(cls);
+    for (const [code, med] of MED_BY_CODE.entries()) {
+      if (med.name && new RegExp(`\\b${med.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(joined)) {
+        ingredients.add(code);
+        for (const cls of med.classes || []) if (CROSS_REACTIVE_CLASSES.includes(cls)) classes.add(cls);
+      }
     }
   }
   return { classes, ingredients };

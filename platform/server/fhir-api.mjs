@@ -206,7 +206,7 @@ const HUMAN_JUDGEMENT = ['annotation', 'expert-grade'];
 const isJudgement = (doc) => (doc?.resourceType === 'Observation' && (doc.category || []).some((c) => (c.coding || []).some((x) => HUMAN_JUDGEMENT.includes(x.code))))
   // A scribe benchmark's reference note is the answer key. It is recorded after the case moment, and hidden from agents outright as well.
   || (doc?.resourceType === 'DocumentReference' && (doc.extension || []).some((e) => e.url === 'urn:hospital-desktop:gold-note'));
-function withoutJudgements(source) {
+export function withoutJudgements(source) {
   return {
     query: async (...a) => (await source.query(...a)).filter((d) => !isJudgement(d)),
     get: async (...a) => { const doc = await source.get(...a); return isJudgement(doc) ? null : doc; },
@@ -500,6 +500,8 @@ export function createFhirApi({ store, hooks = {} }) {
     assertType(type);
     const versions = await reader(ctx).history(type, id, { branch: ctx.branch });
     if (!versions.length) throw new HttpError(404, `${type}/${id} not found`, 'not-found');
+    const denial = await consent.blocked(patientOf(versions[versions.length - 1], type), ctx);
+    if (denial) { await logRead(ctx, { action: 'consent.deny', args: { type, id, operation: '_history', consent: denial.id }, resources: [] }); throw new HttpError(403, 'The patient\'s consent does not allow this record to be shared for this purpose', 'forbidden'); }
     await logRead(ctx, { action: 'fhir.history', args: { type, id }, resources: versions });
     return { status: 200, body: bundle('history', versions.reverse()) };
   }
@@ -507,6 +509,8 @@ export function createFhirApi({ store, hooks = {} }) {
   async function everything(id, ctx) {
     const patient = await reader(ctx).get('Patient', id, { branch: ctx.branch, asOf: ctx.asOf });
     if (!patient) throw new HttpError(404, `Patient/${id} not found`, 'not-found');
+    const denial = await consent.blocked(id, ctx);
+    if (denial) { await logRead(ctx, { action: 'consent.deny', args: { type: 'Patient', id, operation: '$everything', consent: denial.id }, resources: [] }); throw new HttpError(403, 'The patient\'s consent does not allow this record to be shared for this purpose', 'forbidden'); }
     const rows = (await reader(ctx).everything(`Patient/${id}`, { branch: ctx.branch, asOf: ctx.asOf }))
       .filter((r) => r.resourceType !== 'AuditEvent');
     await logRead(ctx, {

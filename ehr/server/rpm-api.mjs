@@ -137,7 +137,7 @@ export function createRpmApi({ store, fhir }) {
     return { reading: { id: saved.id, key, value: Number(value), at: saved.effectiveDateTime, flag: check.flag }, alerts: opened };
   }
 
-  async function postReading(body, ctx, source) {
+  async function postReading(body, ctx, source, person = null) {
     assertWrite(ctx, 'Observation', 'create', { categories: ['home-reading'] });
     const key = String(body.key || '');
     if (!READINGS[key]) throw new HttpError(422, `key must be one of ${Object.keys(READINGS).join(', ')}`);
@@ -148,7 +148,8 @@ export function createRpmApi({ store, fhir }) {
       let patient = await tx.get('Patient', id, { branch: ctx.branch });
       if (!patient) patient = (await tx.query('Patient', {}, { branch: ctx.branch })).find((p) => mrnOf(p) === id) || null;
       if (!patient) throw new HttpError(404, `Patient "${id}" not found (id or MRN)`);
-      if (ctx.actor.role === 'patient' && ctx.actor.id !== `Patient/${patient.id}` && ctx.actor.id !== 'patient') throw new HttpError(403, 'A patient records only their own readings');
+      const ownPatient = person?.patientId === patient.id || ctx.actor.id === `Patient/${patient.id}` || ctx.actor.id === 'patient';
+      if (ctx.actor.role === 'patient' && !ownPatient) throw new HttpError(403, 'A patient records only their own readings');
       return record(tx, { patientRef: `Patient/${patient.id}`, key, value: body.value, at, device: body.device || null, source, ctx });
     });
     return { status: 201, body: out };
@@ -233,7 +234,7 @@ export function createRpmApi({ store, fhir }) {
       if (parts[0] === 'enrol' && m === 'POST') return enrol(body || {}, ctx);
       if (parts[0] === 'programmes' && parts[1] && parts[2] === 'end' && m === 'POST') return endProgramme(parts[1], body || {}, ctx);
       if (parts[0] === 'thresholds' && parts[1] && m === 'PUT') return adjust(parts[1], body || {}, ctx);
-      if (parts[0] === 'readings' && m === 'POST') return postReading(body || {}, ctx, ctx.actor.role === 'patient' ? 'portal' : 'device-gateway');
+      if (parts[0] === 'readings' && m === 'POST') return postReading(body || {}, ctx, ctx.actor.role === 'patient' ? 'portal' : 'device-gateway', req.person || null);
       if (parts[0] === 'alerts' && parts[1] && m === 'POST') { if (parts[2] === 'message') return message(parts[1], body || {}, ctx); return act(parts[1], parts[2], body || {}, ctx); }
       throw new HttpError(404, `${m} ${url.pathname} is not available`);
     },
