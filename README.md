@@ -19,15 +19,16 @@ The platform supports reinforcement learning, agent evaluation, training-data ge
 ### Install and run
 
 ```bash
-git clone https://github.com/sonalisharma-3/healthcare-insilico-release.git
-cd healthcare-insilico-release
+git clone https://github.com/sonalisharma-3/healthcare-insilico-version-1.git
+cd healthcare-insilico-version-1
 npm install
 cp .env.example .env
 ```
 
-Edit `.env` to set `DATABASE_URL` for your PostgreSQL instance, for example:
+To use PostgreSQL instead of the default SQLite setting in `.env.example`, unset or change `DB_BACKEND` and set `DATABASE_URL`:
 
 ```dotenv
+DB_BACKEND=postgres
 DATABASE_URL=postgres://localhost/healthcare_insilico
 ```
 

@@ -22,6 +22,7 @@ if (db === 'postgres') {
 const storage = (args.storage || await ask('Storage: local, gcs, s3 or azure?', 'local')).toLowerCase();
 const lines = ['# Written by npm run setup. Keys live here or in files named by *_FILE; they are never logged or shown.'];
 if (databaseUrl) lines.push(`DATABASE_URL=${databaseUrl}`);
+else lines.push('DB_BACKEND=sqlite', 'SQLITE_FILE=data/app.sqlite');
 lines.push(`OBJECT_STORE=${['local', 'gcs', 's3', 'azure'].includes(storage) ? storage : 'local'}`);
 if (storage === 'gcs') lines.push(`GCS_BUCKET=${args.bucket || await ask('GCS bucket', 'hospital-desktop')}`, '# GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json');
 if (storage === 's3') lines.push(`S3_BUCKET=${args.bucket || await ask('S3 bucket', 'hospital-desktop')}`, `S3_ENDPOINT=${args.endpoint || await ask('S3 endpoint (blank for AWS)', '')}`, 'S3_ACCESS_KEY_ID=', 'S3_SECRET_ACCESS_KEY=');

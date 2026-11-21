@@ -21,8 +21,10 @@ const env = { ...process.env };
 if (fs.existsSync(envFile)) { for (const line of fs.readFileSync(envFile, 'utf8').split('\n')) { const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/); if (m && env[m[1]] === undefined) env[m[1]] = m[2].replace(/^["']|["']$/g, ''); } pass('.env found'); } else warn('.env not found: defaults apply (SQLite under data/, environment API off). Run npm run setup to write one');
 
 const dbUrl = env.DATABASE_URL || '';
-if (!dbUrl || dbUrl.startsWith('sqlite') || dbUrl.startsWith('file:')) {
-  const file = env.SQLITE_FILE || dbUrl.replace(/^(sqlite:|file:)/, '') || path.join(REPO_ROOT, 'data', 'hospital.sqlite');
+const backend = (env.DB_BACKEND || '').toLowerCase();
+if (!backend && !dbUrl) fail('No database configured: set DB_BACKEND=sqlite or DATABASE_URL=postgres://... in .env');
+else if (backend === 'sqlite' || dbUrl.startsWith('sqlite') || dbUrl.startsWith('file:')) {
+  const file = env.SQLITE_FILE || dbUrl.replace(/^(sqlite:|file:)/, '') || path.join(REPO_ROOT, 'data', 'app.sqlite');
   const dir = path.dirname(path.resolve(REPO_ROOT, file));
   try { fs.mkdirSync(dir, { recursive: true }); fs.accessSync(dir, fs.constants.W_OK); pass(`SQLite database folder is writable: ${dir}`); } catch { fail(`SQLite database folder is not writable: ${dir}`); }
   if (env.ENV_API_ENABLED === 'true') warn('The environment API on SQLite is fine for one worker; for several stateless workers use PostgreSQL');
